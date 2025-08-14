@@ -1,0 +1,2 @@
+com/inje/keycloak/limit/ConcurrentSessionLimiterAuthenticator.class
+com/inje/keycloak/limit/ConcurrentSessionLimiterFactory.class
