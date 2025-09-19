@@ -78,7 +78,7 @@ public class ConcurrentSessionLimiterAuthenticator implements Authenticator {
                 context.success();
                 break;
             case "LOG_ONLY":
-                logOnly(context, sessions);
+                logOnly(context, sessions, max);
                 context.success();
                 break;
             case "DENY_NEW":
@@ -129,11 +129,20 @@ public class ConcurrentSessionLimiterAuthenticator implements Authenticator {
         audit(context, oldest ? "TERMINATE_OLDEST" : "TERMINATE_NEWEST", target, client);
     }
 
-    private void logOnly(AuthenticationFlowContext context, List<UserSessionModel> sessions) {
+    private void logOnly(AuthenticationFlowContext context, List<UserSessionModel> sessions, int max) {
         UserModel user = context.getUser();
-        LOG.warnf("LOG_ONLY: user=%s exceeded concurrent session limit (current=%d)",
-                user.getUsername(), sessions.size());
-        audit(context, "LOG_ONLY_LIMIT_EXCEEDED", null, null);
+
+        // ① LOGIN 이벤트에 디테일만 추가 (여기서 success() 호출 금지!)
+        context.getEvent()
+               .detail("csl_action", "LOG_ONLY_LIMIT_EXCEEDED")
+               .detail("csl_current_sessions", String.valueOf(sessions.size()))
+               .detail("csl_max", String.valueOf(max));
+
+        // ② 운영 로그만 남김
+        LOG.warnf("LOG_ONLY: user=%s exceeded concurrent session limit (current=%d, max=%d)",
+                  user != null ? user.getUsername() : "unknown", sessions.size(), max);
+
+        // ③ 로그인은 정상 흐름 → 위에서 context.success() 호출하는 쪽으로 복귀
     }
 
     private void deny(AuthenticationFlowContext context, String reason) {
@@ -242,11 +251,12 @@ public class ConcurrentSessionLimiterAuthenticator implements Authenticator {
 
     private void audit(AuthenticationFlowContext context, String action,
                        UserSessionModel userSession, ClientModel client) {
-        EventBuilder ev = context.getEvent().clone()
-                .detail("action", action);
-        if (userSession != null) ev.detail("user_session_id", safeId(userSession.getId()));
-        if (client != null) ev.detail("client_id", client.getClientId());
-        ev.success(); // 이벤트를 남겨서 SIEM/로그로 흘러가게
+        // 기존: ev.success();  <-- 제거!
+        context.getEvent()
+               .detail("csl_action", action);
+        if (userSession != null) context.getEvent().detail("user_session_id", safeId(userSession.getId()));
+        if (client != null)      context.getEvent().detail("client_id", client.getClientId());
+        // success()는 호출하지 않음 (최종 LOGIN 시 합쳐서 기록되도록)
     }
 
     private String safeId(String id) {
